@@ -1,60 +1,90 @@
 import socket
 import datetime
 
-# Define the maximum login attempts
 MAX_LOGIN_ATTEMPTS = 3
+PORT_SCAN_THRESHOLD = 3
 
-# Create a dictionary to store login attempts
-login_attempts = {}
+class MockFTPServer:
+    def __init__(self):
+        self.log_file = open("ftp_server_log.txt", "a")
+        self.login_attempts = {}
+        self.port_scan_attempts = {}
 
-def handle_login(client_socket, address):
-    attempts = login_attempts.get(address[0], 0)
-    if attempts >= MAX_LOGIN_ATTEMPTS:
-        client_socket.send(b"Too many login attempts. Connection terminated.\n")
-        return False
+    def log(self, message):
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.log_file.write(f"[{timestamp}] {message}\n")
+        print(message)
 
-    client_socket.send(b"220 Welcome to the mock FTP server\n")
-    client_socket.send(b"331 Please specify the password\n")
-    password_attempt = client_socket.recv(1024).strip().decode('utf-8')
-    # Log the login attempt
-    with open("login_attempts.log", "a") as f:
-        f.write(f"Timestamp: {datetime.datetime.now()}, Username: anonymous, Password: {password_attempt}, Source IP: {address[0]}, TTL: {address[1]}\n")
-    login_attempts[address[0]] = attempts + 1
-    if password_attempt == "password":
-        client_socket.send(b"230 Login successful\n")
-        return True
-    else:
-        client_socket.send(b"530 Login incorrect\n")
-        return False
+    def handle_connection(self, client_socket, address):
+        self.log(f"Connection from {address[0]}:{address[1]}")
+        try:
+            client_socket.sendall(b"220 Welcome to Mock FTP Server\r\n")
+            login_attempt_count = 0
+            while login_attempt_count < MAX_LOGIN_ATTEMPTS:
+                data = client_socket.recv(1024).decode().strip()
+                if not data:
+                    break
+                if "USER" in data.upper():
+                    username = data.split(" ")[1]
+                    self.log(f"Login attempt with username '{username}' from {address[0]}")
+                    if address[0] in self.login_attempts:
+                        self.login_attempts[address[0]] += 1
+                    else:
+                        self.login_attempts[address[0]] = 1
 
-def handle_connection(client_socket, address):
-    client_socket.send(b"220 Welcome to the mock FTP server\n")
-    while True:
-        data = client_socket.recv(1024)
-        if not data:
-            break
-        command = data.strip().decode('utf-8')
-        if command.upper() == "USER":
-            if handle_login(client_socket, address):
-                break
-        elif command.upper() == "QUIT":
-            break
+                    if self.login_attempts[address[0]] > MAX_LOGIN_ATTEMPTS:
+                        self.log(f"Max login attempts reached. Terminating connection from {address[0]}")
+                        client_socket.sendall(b"530 Maximum login attempts reached. Disconnecting...\r\n")
+                        break
+                    else:
+                        client_socket.sendall(b"331 Password required for user.\r\n")
+                        password_attempt = client_socket.recv(1024).decode().strip()
+                        password = password_attempt.split(" ")[1]
+                        if username == "dummyuser" and password == "dummypassword":
+                            client_socket.sendall(b"230 Login successful.\r\n")
+                            self.log(f"Login successful for username '{username}' from {address[0]}")
+                            while True:
+                                data = client_socket.recv(1024).decode().strip()
+                                # Implement FTP command handling here
+                                if data.upper() == "QUIT":
+                                    self.log(f"Client {address[0]}:{address[1]} disconnected.")
+                                    break
+                                else:
+                                    self.log(f"Received FTP command '{data}' from {address[0]}")
+                                    client_socket.sendall(b"200 Command okay.\r\n")
+                            break
+                        else:
+                            client_socket.sendall(b"530 Login incorrect. Please try again.\r\n")
+                            self.log(f"Login attempt failed for username '{username}' from {address[0]}")
+                            login_attempt_count += 1
+                else:
+                    client_socket.sendall(b"530 Please login with USER command.\r\n")
+        except Exception as e:
+            self.log(f"Error: {str(e)}")
+        finally:
+            client_socket.close()
+
+    def detect_port_scan(self, address):
+        if address[0] in self.port_scan_attempts:
+            self.port_scan_attempts[address[0]] += 1
         else:
-            client_socket.send(b"530 Please login with USER command\n")
-    client_socket.close()
+            self.port_scan_attempts[address[0]] = 1
 
-def main():
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.bind(('0.0.0.0', 21))
-    server_socket.listen(5)
-    print("Mock FTP server started on port 21...")
-    try:
-        while True:
-            client_socket, address = server_socket.accept()
-            print(f"Connection from {address[0]}:{address[1]}")
-            handle_connection(client_socket, address)
-    except KeyboardInterrupt:
-        print("Server terminated.")
+        if self.port_scan_attempts[address[0]] >= PORT_SCAN_THRESHOLD:
+            self.log(f"Port scan detected from {address[0]}")
+            # Take appropriate action, like blocking IP or logging to a separate file
+
+    def start(self, host='', port=21):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
+            server_socket.bind((host, port))
+            server_socket.listen(5)
+            self.log(f"Mock FTP server started on port {port}")
+
+            while True:
+                client_socket, address = server_socket.accept()
+                self.detect_port_scan(address)
+                self.handle_connection(client_socket, address)
 
 if __name__ == "__main__":
-    main()
+    ftp_server = MockFTPServer()
+    ftp_server.start()
