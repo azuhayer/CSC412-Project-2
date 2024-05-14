@@ -6,14 +6,19 @@ PORT_SCAN_THRESHOLD = 3
 
 class MockFTPServer:
     def __init__(self):
-        self.log_file = open("ftp_server_log.txt", "a")
+        self.log_file = open("ftp_server_log.log", "a")
         self.login_attempts = {}
         self.port_scan_attempts = {}
 
     def log(self, message):
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.log_file.write(f"[{timestamp}] {message}\n")
-        print(message)
+        log_message = f"[{timestamp}] {message}\n"
+        try:
+            self.log_file.write(log_message)
+            self.log_file.flush()
+            print(message)
+        except Exception as e:
+            print(f"Error writing to log file: {e}")
 
     def handle_connection(self, client_socket, address):
         self.log(f"Connection from {address[0]}:{address[1]}")
